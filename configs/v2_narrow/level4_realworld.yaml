@@ -1,0 +1,29 @@
+level: 4
+name: "Real-World Cloudflare Traffic"
+topology:
+  n_senders: 50
+  n_receivers: 50
+  bottleneck_gbps: 100
+  link_delay_ms: 15
+traffic:
+  type: "cloudflare"
+  demand_gbps: 80
+traffic_file: "data/traffic/cloudflare_history_training.json"
+timesteps: 50000
+max_episode_steps: 50
+agent:
+  learning_rate: 5.0e-5
+  gamma: 0.99
+  clip_range: 0.15
+  n_steps: 256
+  burst_multiplier: 0.1
+reward:
+  alpha: 1.0
+  beta: 0.5
+  gamma: 0.8
+  delta: 0.2
+max_rate_mbps: 100
+min_rate_mbps: 40.0
+max_action_rate_mbps: 90.0
+max_queue_bytes: 5242880
+max_drops_norm: 100.0

@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv
+.python-version
+
+# Project-specific generated artifacts
+data/results/
+data/plots/
+
+# Large model files (ignore all except the final production model)
+models/*
+!models/ppo_curriculum_final.zip
+
+# OS files
+.DS_Store

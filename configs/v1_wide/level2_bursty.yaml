@@ -1,0 +1,28 @@
+level: 2
+name: "Bursty Traffic"
+topology:
+  n_senders: 15
+  n_receivers: 15
+  bottleneck_gbps: 100
+  link_delay_ms: 10
+traffic:
+  type: "onoff"
+  demand_gbps: 60
+timesteps: 80000
+max_episode_steps: 50
+agent:
+  learning_rate: 3.0e-4
+  gamma: 0.99
+  clip_range: 0.2
+  n_steps: 512
+  burst_multiplier: 0.1
+reward:
+  alpha: 1.0
+  beta: 0.5
+  gamma: 0.8
+  delta: 0.2
+max_rate_mbps: 100
+min_rate_mbps: 1.0
+max_action_rate_mbps: 100.0
+max_queue_bytes: 5242880
+max_drops_norm: 100.0
