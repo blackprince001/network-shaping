@@ -2,9 +2,7 @@
 
 This project implements a Reinforcement Learning (RL) agent that dynamically manages network traffic shaping using the **ns-3 network simulator**. By training a PPO (Proximal Policy Optimization) agent, the system optimizes Token Bucket Filter (TBF) rates in real-time to balance throughput, queue depth, and packet loss.
 
----
-
-## 🚀 Problem Statement
+## Problem Statement
 
 Traditional traffic shaping relies on static rate limiters (TBF) with fixed bandwidth caps. These fail to adapt to fluctuating real-world traffic patterns, leading to:
 - **Packet drops** during demand spikes.
@@ -65,7 +63,6 @@ For more detailed information, see the `docs/` directory:
 - [CLI Reference](docs/commands.md): Comprehensive list of available commands.
 - [Debug Report](docs/debug_report.md): Historical debugging and troubleshooting notes.
 
----
 
 ##  Design Decisions
 
