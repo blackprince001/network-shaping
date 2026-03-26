@@ -9,7 +9,7 @@ Traditional traffic shaping relies on static rate limiters (TBF) with fixed band
 - **Wasted bandwidth** during off-peak hours.
 - **Latency spikes** due to bufferbloat.
 
-**Our Goal:** Build an adaptive RL agent that outperforms static baselines on all key networking metrics.
+**Goal:** Build an adaptive RL agent that outperforms static baselines on all key networking metrics.
 
 ## 🛠 Architecture
 
@@ -20,55 +20,85 @@ The system uses a Python-based RL environment (Gymnasium) that communicates with
 │  PPO Agent  │ ◄──────────────────────► │  ns-3 Simulator  │
 │  (Python)   │   STEP,<rate>,<burst>,   │  (C++)           │
 │             │   <demand>               │                  │
-│  Gymnasium  │   <queue>,<throughput>,   │  TBF Queue Disc  │
+│  Gymnasium  │   <queue>,<throughput>,  │  TBF Queue Disc  │
 │  Environment│   <drops>                │  on bottleneck   │
 └─────────────┘                          └──────────────────┘
 ```
 
 ### Key Components
-- **`main.py`**: CLI for training and inference.
+- **`main.py`**: Unified CLI for all operations (train, infer, evaluate, plot, sanity, test).
 - **`src/environments/ns3_env.py`**: Gymnasium wrapper for the ns-3 simulator.
-- **`ns-3.36/contrib/network-shaping/`**: C++ simulation module implementing the bottleneck topology.
-- **`src/traffic/cloudflare_loader.py`**: Loader for real-world Cloudflare Radar traffic profiles.
+- **`src/evaluation/ab_test.py`**: A/B testing — AI models vs static baselines.
+- **`src/visualization/plotting.py`**: Comparison plots from evaluation results.
+- **`ns-3.36/contrib/network-shaping/`**: C++ simulation module.
+- **`src/traffic/cloudflare_loader.py`**: Loader for Cloudflare Radar traffic profiles.
 
 ## Quick Start
 
 ### Prerequisites
 - Python 3.13+
 - `uv` package manager
-- ns-3.36 (pre-built)
+- ns-3.46 (pre-built, path in `NS3_BINARY` env var or `docs/commands.md`)
 
 ### Training
 ```bash
-# Train through curriculum levels (Mock mode for fast testing)
-uv run main.py train --config configs/curriculum/ --output models/ --mock
+# Train through curriculum levels (mock simulator — fast)
+uv run python main.py train --config configs/curriculum/ --output models/
 
-# Train with real ns-3
-uv run main.py train --config configs/curriculum/ --output models/ --ns3-binary path/to/ns3
+# Train with real ns-3 (very slow — ~1 s/step)
+uv run python main.py train --config configs/curriculum/ --output models/ --no-mock
 ```
 
-### Evaluation
+### Inference
 ```bash
-# Compare AI vs Static Baselines
-uv run evaluate.py --model models/ppo_curriculum_final.zip --steps 50 --mock
+# AI agent
+uv run python main.py infer --model models/ppo_curriculum_final.zip \
+    --output data/results/ai_metrics.csv --steps 100
 
-# Generate visual reports
-uv run plot.py --detail data/results/evaluation_detail.csv --summary data/results/evaluation_summary.csv
+# Static baseline at 50 Mbps
+uv run python main.py infer --baseline 50 \
+    --output data/results/baseline_50mbps.csv --steps 100
+```
+
+### A/B Evaluation
+```bash
+# Stress test — baselines only
+uv run python main.py evaluate --stress --steps 100 --output data/results/eval/
+
+# With AI agent
+uv run python main.py evaluate --stress --steps 100 \
+    --model ai_v1:models/ppo_curriculum_final.zip \
+    --output data/results/eval/
+```
+
+### Plot Results
+```bash
+uv run python main.py plot \
+    --detail data/results/eval/detail.csv \
+    --summary data/results/eval/summary.csv
+```
+
+### Other Commands
+```bash
+# Verify simulator toll-booth behavior
+uv run python main.py sanity
+
+# Run unit tests
+uv run python main.py test
 ```
 
 ## Further Documentation
 
-For more detailed information, see the `docs/` directory:
+- [CLI Reference](docs/commands.md): All subcommands and flags.
 - [Technical Specification](docs/spec.md): Detailed logic and module specs.
-- [CLI Reference](docs/commands.md): Comprehensive list of available commands.
-- [Debug Report](docs/debug_report.md): Historical debugging and troubleshooting notes.
+- [Debug Report](docs/debug_report.md): Historical debugging notes.
 
-
-##  Design Decisions
+## Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
-| **PPO Agent** | Handles continuous action spaces (rate control) stably and efficiently. |
-| **stdin/stdout Bridge** | Simple, low-overhead communication between Python and C++. |
-| **Curriculum Training** | Progressively builds agent capability from basic to real-world scenarios. |
-| **Mock Simulator** | Enables rapid iteration without the 30-min ns-3 compilation overhead. |
+| **PPO Agent** | Handles continuous action spaces (rate control) stably. |
+| **stdin/stdout Bridge** | Simple, low-overhead Python ↔ C++ communication. |
+| **Curriculum Training** | Progressively builds agent capability from basic to real-world. |
+| **Mock Simulator** | Enables rapid iteration without 30-min ns-3 compilation overhead. |
+| **Unified CLI** | Single `main.py` entrypoint — no scattered scripts to remember. |

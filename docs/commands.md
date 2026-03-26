@@ -1,4 +1,6 @@
-# Network Shaping RL - Commands
+# Network Shaping RL — CLI Reference
+
+All operations use a single entrypoint: `main.py`.
 
 ## Prerequisites
 
@@ -11,178 +13,229 @@ cd /home/blackprince/Downloads/ns-3.46.1
 ./ns3 configure --enable-examples
 ./ns3 build
 
-# Verify binary exists
-ls build/scratch/ns3.46.1-network-shaping-simulation-optimized
+# Optional: set env var so you never need to pass --ns3-binary
+export NS3_BINARY=/home/blackprince/Downloads/ns-3.46.1/build/scratch/ns3.46.1-network-shaping-simulation-optimized
 ```
 
-## Benchmark
+---
 
-Verify the toll booth behavior before training or evaluation.
+## `train` — Train the PPO Agent
 
 ```bash
-cd /home/blackprince/Documents/dev/work/network-shaping
-uv run python main.py benchmark
+uv run python main.py train --config <DIR> --output <DIR> [--mock | --no-mock]
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config DIR` | required | Directory of curriculum YAML files |
+| `--output DIR` | required | Directory to save model checkpoints |
+| `--mock` / `--no-mock` | `--mock` | Use mock or real ns-3 simulator |
+| `--ns3-binary PATH` | `$NS3_BINARY` | Path to compiled ns-3 binary |
+
+> Training always defaults to `--mock` because real ns-3 spawns a new process per step (~1 s each), making 50 K+ timesteps impractical. Use `--no-mock` only for final validation runs.
+
+### Curriculum levels
+
+| Level | Name | Timesteps |
+|-------|------|-----------|
+| 1 | Basic Bottleneck | 50,000 |
+| 2 | Bursty Traffic | 80,000 |
+| 3 | Chaotic Mixed | 80,000 |
+| 4 | Real-World Cloudflare | 50,000 |
+| **Total** | | **260,000** |
+
+### Outputs
+- `models/ppo_curriculum_final.zip` — Final trained model
+- `models/checkpoint_latest.zip` — Latest per-level checkpoint
+
+### Examples
+```bash
+# Fast (mock simulator)
+uv run python main.py train --config configs/curriculum/ --output models/
+
+# Real ns-3 (slow)
+uv run python main.py train --config configs/curriculum/ --output models/ --no-mock
+```
+
+---
+
+## `infer` — Run Inference
+
+```bash
+uv run python main.py infer (--model PATH | --baseline MBPS) --output CSV [options]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model PATH` | — | Path to trained PPO model (`.zip`) |
+| `--baseline MBPS` | — | Static baseline rate in **Mbps** |
+| `--output CSV` | required | Output CSV path for per-step metrics |
+| `--steps N` | `100` | Number of simulation steps |
+| `--traffic JSON` | — | Cloudflare Radar JSON for real demand |
+| `--config YAML` | — | Curriculum YAML to override env settings |
+| `--ns3-binary PATH` | `$NS3_BINARY` | Path to compiled ns-3 binary |
+
+### Examples
+```bash
+# AI agent
+uv run python main.py infer \
+    --model models/ppo_curriculum_final.zip \
+    --output data/results/ai_metrics.csv --steps 100
+
+# Static baseline at 50 Mbps
+uv run python main.py infer \
+    --baseline 50 \
+    --output data/results/baseline_50mbps.csv --steps 100
+
+# AI with real-world Cloudflare demand
+uv run python main.py infer \
+    --model models/ppo_curriculum_final.zip \
+    --traffic data/traffic/cloudflare_hourly.json \
+    --output data/results/ai_realworld.csv --steps 168
+
+# Multiple baselines
+for rate in 30 40 50 60 70 80; do
+  uv run python main.py infer --baseline $rate \
+      --output "data/results/baseline_${rate}mbps.csv" --steps 100
+done
+```
+
+---
+
+## `evaluate` — A/B Evaluation (Parallel)
+
+Compare AI models and static baselines simultaneously.
+
+```bash
+uv run python main.py evaluate [--model NAME:PATH ...] [options]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model NAME:PATH` | — | AI model, repeat for multiple |
+| `--steps N` | `100` | Steps per scenario |
+| `--output DIR` | `data/results/evaluation` | Output directory for CSVs |
+| `--stress` | off | Use stress traffic (30–120 Mbps swings) |
+| `--traffic-scale X` | `1.0` | Scale factor on Cloudflare demand |
+| `--baselines MBPS...` | `30 50 70` | Static baseline rates |
+| `--no-baselines` | off | Skip baselines (AI models only) |
+| `--workers N` | `4` | Max parallel workers |
+| `--ns3-binary PATH` | `$NS3_BINARY` | Path to compiled ns-3 binary |
+
+### Stress traffic pattern
+
+| Phase | Steps | Demand | Effect |
+|-------|-------|--------|--------|
+| Ramp up | 1–8 | 30→100 Mbps | Pressure builds |
+| Hold high | 9–14 | 100–110 Mbps | Drops at low rates |
+| Spike | 15–16 | 120 Mbps | Maximum stress |
+| Crash | 17–20 | 30 Mbps | Agent should lower rate fast |
+| Recovery | 21–30 | 40–80 Mbps | Gentle wave |
+
+### Outputs (saved in `--output DIR`)
+- `detail.csv` — Per-step data (scenario, step, demand, throughput, queue, drops, rate, reward)
+- `summary.csv` — Aggregated comparison per scenario
+
+### Examples
+```bash
+# Baselines only, stress traffic
+uv run python main.py evaluate --stress --steps 100 --output data/results/eval/
+
+# With AI model
+uv run python main.py evaluate --stress --steps 100 \
+    --model ai_v1:models/ppo_curriculum_final.zip \
+    --output data/results/eval/
+
+# Multiple models
+uv run python main.py evaluate --steps 50 \
+    --model v1:models/v1/ppo_curriculum_final.zip \
+    --model v2:models/v2/ppo_curriculum_final.zip \
+    --output data/results/compare/
+
+# Scaled Cloudflare demand
+uv run python main.py evaluate --traffic-scale 1.5 --steps 100 \
+    --output data/results/cloudflare_scaled/
+```
+
+---
+
+## `plot` — Generate Plots
+
+```bash
+uv run python main.py plot --detail CSV --summary CSV [--output DIR]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--detail CSV` | required | Per-step detail CSV |
+| `--summary CSV` | required | Summary CSV |
+| `--output DIR` | `data/results/plots` | Directory to save plots |
+
+Plots saved:
+- `comparison_timeseries.png` — Throughput / queue / drops / reward over time
+- `summary_bars.png` — Bar chart comparison (throughput, queue, reward)
+- `agent_actions.png` — AI rate decisions vs baseline lines *(only if AI agent present)*
+
+### Example
+```bash
+uv run python main.py plot \
+    --detail data/results/eval/detail.csv \
+    --summary data/results/eval/summary.csv \
+    --output data/results/eval/plots/
+```
+
+---
+
+## `sanity` — Simulator Verification
+
+Quick toll-booth sanity check using real ns-3.
+
+```bash
+uv run python main.py sanity [--steps N] [--ns3-binary PATH]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--steps N` | `5` | Steps per scenario |
+| `--ns3-binary PATH` | `$NS3_BINARY` | ns-3 binary path |
 
 Expected output:
 ```
 Scenario                       Rate  Demand |     Thru      Queue  Drops | Expected
-  demand<rate (no limit)       100      80  |    79.6          0      0  | [OK]
-  demand>rate (limit)           50     100  |    52.3  4,999,104      0  | [OK]
-  demand>>rate (heavy)          30     100  |    32.9  4,999,104      0  | [OK]
-  demand=rate (boundary)        60      60  |    59.7          0      0  | [OK]
+  demand < rate (no limit)      100      80  |    79.6          0      0  | [OK]
+  demand = rate (boundary)       60      60  |    59.7          0      0  | [OK]
+  demand > rate (limit)          50     100  |    52.3  4,999,104      0  | [OK]
+  demand >> rate (heavy)         30     100  |    32.9  4,999,104      0  | [OK]
 ```
 
-Run with custom step count:
-```bash
-uv run python main.py benchmark --steps 10
-```
+---
 
-## Training
-
-Training always uses the mock simulator — real ns-3 spawns a binary per step (~1s each), making 50K+ timesteps impractical.
+## `test` — Unit Tests
 
 ```bash
-cd /home/blackprince/Documents/dev/work/network-shaping
-uv run python main.py train --config configs/curriculum/ --output models/
+uv run python main.py test
 ```
 
-### Curriculum levels
+Runs the `__main__` test blocks in:
+- `src/utils/pipe_bridge.py`
+- `src/environments/metrics.py`
+- `src/environments/ns3_env.py`
+- `src/agents/ppo_agent.py`
 
-| Level | Name | Timesteps | Max Episode Steps | n_steps |
-|-------|------|-----------|-------------------|---------|
-| 1 | Basic Bottleneck | 50,000 | 50 | 512 |
-| 2 | Bursty Traffic | 80,000 | 50 | 512 |
-| 3 | Chaotic Mixed | 80,000 | 50 | 512 |
-| 4 | Real-World Cloudflare | 50,000 | 50 | 256 |
-| **Total** | | **260,000** | | |
+Exits with code `0` if all pass, `1` otherwise.
 
-Output:
-- `models/ppo_curriculum_final.zip` — Final trained model
-- `models/checkpoint_latest.zip` — Latest per-level checkpoint
-
-## Inference
-
-Inference uses real ns-3. The binary must be built first.
-
-### AI agent
-
-```bash
-uv run python main.py infer --model models/ppo_curriculum_final.zip \
-  --output data/results/ai_metrics.csv --steps 100
-```
-
-### AI with Cloudflare real-world traffic
-
-```bash
-uv run python main.py infer --model models/ppo_curriculum_final.zip \
-  --traffic data/traffic/cloudflare_hourly.json \
-  --output data/results/ai_realworld.csv --steps 168
-```
-
-### Static baseline (no AI, fixed rate)
-
-```bash
-uv run python main.py infer --baseline 50 \
-  --output data/results/baseline_50mbps.csv --steps 100
-```
-
-### Multiple baselines
-
-```bash
-for rate in 30 40 50 60 70 80; do
-  uv run python main.py infer --baseline $rate \
-    --output "data/results/baseline_${rate}mbps.csv" --steps 100
-done
-```
-
-### Custom ns-3 binary path
-
-```bash
-uv run python main.py infer --baseline 50 \
-  --ns3-binary /path/to/ns3.46.1-network-shaping-simulation-optimized \
-  --output data/results/baseline.csv --steps 100
-```
-
-## A/B Evaluation
-
-Compare AI agent against static baselines in parallel.
-
-### Stress test (recommended — forces real decisions)
-
-Demand swings 30–120 Mbps in a pattern that guarantees drops and queue buildup:
-
-| Phase | Steps | Demand | What happens |
-|-------|-------|--------|-------------|
-| Ramp up | 1–8 | 30→100 Mbps | Pressure builds |
-| Hold high | 9–14 | 100–110 Mbps | Drops at low rates |
-| Spike | 15–16 | 120 Mbps | Maximum stress |
-| Crash | 17–20 | 30 Mbps | Agent should drop rate fast |
-| Recovery | 21–30 | 40–80 Mbps | Gentle wave |
-
-```bash
-# Baselines only
-uv run python evaluate.py --stress --steps 100
-
-# With AI agent
-uv run python evaluate.py --model models/ppo_curriculum_final.zip --stress --steps 100
-```
-
-### Scaled Cloudflare traffic
-
-```bash
-# Push demand 1.5x higher than raw Cloudflare data
-uv run python evaluate.py --traffic-scale 1.5 --steps 100
-
-# With AI agent
-uv run python evaluate.py --model models/ppo_curriculum_final.zip --traffic-scale 1.5 --steps 100
-```
-
-### Default Cloudflare traffic
-
-```bash
-uv run python evaluate.py --steps 100
-```
-
-### Output
-
-- `data/results/evaluation_detail.csv` — Per-step data (demand, throughput, queue, drops, rate, reward)
-- `data/results/evaluation_summary.csv` — Summary comparison
-
-## Plotting
-
-```bash
-uv run python plot.py \
-  --detail data/results/evaluation_detail.csv \
-  --summary data/results/evaluation_summary.csv
-```
-
-Plots saved to `data/results/plots/`:
-- `comparison_timeseries.png` — Throughput (with demand line) / Queue / Drops / Reward over time
-- `summary_bars.png` — Bar chart comparison across scenarios
-- `agent_actions.png` — AI agent rate decisions (only if AI agent was evaluated)
-
-## Unit Tests
-
-```bash
-# All tests
-uv run python src/utils/pipe_bridge.py
-uv run python src/environments/metrics.py
-uv run python src/environments/ns3_env.py
-uv run python src/agents/ppo_agent.py
-```
+---
 
 ## Rebuilding ns-3 After C++ Changes
 
 ```bash
 cd /home/blackprince/Downloads/ns-3.46.1
 
-# Copy updated contrib files from project
+# Copy updated files
 cp /home/blackprince/Documents/dev/work/network-shaping/ns-3.36/contrib/network-shaping/*.cc \
    /home/blackprince/Documents/dev/work/network-shaping/ns-3.36/contrib/network-shaping/*.h \
    contrib/network-shaping/
 
-# Build
 ./ns3 build
 
 # Verify
@@ -190,42 +243,29 @@ cp /home/blackprince/Documents/dev/work/network-shaping/ns-3.36/contrib/network-
 # Expected: ~50 Mbps throughput, queue > 0, drops = 0
 ```
 
-## How It Works
+---
 
-### Architecture
+## How It Works
 
 ```
 Python (RL agent)  →  spawns  →  ns-3 binary (one-shot)
-                          ←  reads  ←  stdout: queue,throughput,drops
+                       ←  reads  ←  stdout: queue,throughput,drops
 ```
 
-Each simulation step:
+Each step:
 1. Python reads the next demand value from the Cloudflare profile (Mbps)
-2. Python spawns the ns-3 binary with CLI args: `--rate=<mbps> --burst=<bytes> --source=<mbps> --duration=1`
-3. ns-3 runs the simulation for 1 second with a fixed source at `source` rate
-4. The `RateLimiterQueueDisc` (toll booth) caps output at `rate` Mbps
-5. ns-3 outputs `queue_bytes,throughput_mbps,drops` to stdout and exits
-6. Python reads the metrics, computes reward, decides next action
+2. Python spawns the ns-3 binary: `--rate=<mbps> --burst=<bytes> --source=<mbps> --duration=1`
+3. ns-3 runs for 1 second, outputs `queue_bytes,throughput_mbps,drops` and exits
+4. Python reads metrics, computes reward, decides next action
 
 ### Toll Booth Model
 
 ```
 Source (100 Mbps) → [RateLimiterQueueDisc] → 100 Mbps link → Receiver
-                         ↑ the bottleneck
+                          ↑ the bottleneck
                     agent sets this rate
 ```
 
-- Source always sends at 100 Mbps (full link rate)
-- RateLimiterQueueDisc caps output at the agent's rate (30–90 Mbps)
-- Throughput at receiver = min(source_rate, agent_rate)
-- If agent_rate < source_rate: excess queues up (5 MB max)
-- If queue is full: packets are dropped
-- The 100 Mbps link is just wire — irrelevant to shaping
-
-### Units
-
-All values in Mbps and bytes. No Gbps anywhere in the pipeline.
-
-### Queue
-
-5 MB token bucket queue. Burst is `rate * 0.1 * 1e6 / 8` bytes (scales with rate).
+- Source sends at demand Mbps; RateLimiterQueueDisc caps output at the agent's chosen rate
+- If `agent_rate < demand`: excess queues up (5 MB max); if queue full → drops
+- All values in **Mbps** and **bytes** — no Gbps anywhere in the pipeline
